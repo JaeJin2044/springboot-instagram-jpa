@@ -29,7 +29,6 @@ public class ControllerExceptionHandler {
 	
 	@ExceptionHandler(CustomValidationException.class) 
 	public String validationException(CustomValidationException e) {
-		System.out.println("발동 될까요?");
 		if(e.getErrorMap() == null) {
 			return Script.back(e.getMessage());
 		}else {
