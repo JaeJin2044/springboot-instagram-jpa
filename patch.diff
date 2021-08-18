@@ -1,0 +1,312 @@
+From 573baa2a93fc3ed29f86d1963d00219afd3ae240 Mon Sep 17 00:00:00 2001
+From: "DESKTOP-AEEUFEB\\Jaejin" <shzhem764@naver.com>
+Date: Mon, 16 Aug 2021 23:48:55 +0900
+Subject: [PATCH] =?UTF-8?q?'=ED=9A=8C=EC=9B=90=EC=A0=95=EB=B3=B4=20?=
+ =?UTF-8?q?=EC=88=98=EC=A0=95=20=EC=9C=A0=ED=9A=A8=EC=84=B1=20=EA=B2=80?=
+ =?UTF-8?q?=EC=82=AC'?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../photogramstart/config/SecurityConfig.java |  2 +
+ .../handler/ControllerExceptionHandler.java   | 10 ++++-
+ .../ex/CustomValidationApiException.java      | 26 +++++++++++++
+ .../photogramstart/service/UserService.java   |  8 +++-
+ .../photogramstart/web/UserController.java    |  5 +--
+ .../web/api/UserApiController.java            | 37 ++++++++++++++++---
+ .../web/dto/user/UserUpdateDTO.java           |  5 ++-
+ src/main/resources/static/js/update.js        | 17 ++++++---
+ src/main/webapp/WEB-INF/views/user/update.jsp |  8 ++--
+ 9 files changed, 95 insertions(+), 23 deletions(-)
+ create mode 100644 src/main/java/com/cos/photogramstart/handler/ex/CustomValidationApiException.java
+
+diff --git a/src/main/java/com/cos/photogramstart/config/SecurityConfig.java b/src/main/java/com/cos/photogramstart/config/SecurityConfig.java
+index 8c21188..07cdd7f 100644
+--- a/src/main/java/com/cos/photogramstart/config/SecurityConfig.java
++++ b/src/main/java/com/cos/photogramstart/config/SecurityConfig.java
+@@ -23,6 +23,8 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter{
+ 		
+ 		http.csrf().disable(); //CSRF토큰 비활성화 (POSTMAN으로 요청하든 ... 정상적으로 요청하든 나는 구분하지 않겠다.)
+ 		
++		
++		
+ 		http.authorizeRequests()
+ 		.antMatchers("/","/user/**","/image/**","/subscribe/**","/comment/**").authenticated() //해당  url접근시 인증해야함..
+ 		.anyRequest().permitAll()  // 나머지는 허가해준다.
+diff --git a/src/main/java/com/cos/photogramstart/handler/ControllerExceptionHandler.java b/src/main/java/com/cos/photogramstart/handler/ControllerExceptionHandler.java
+index 8b35708..801dda5 100644
+--- a/src/main/java/com/cos/photogramstart/handler/ControllerExceptionHandler.java
++++ b/src/main/java/com/cos/photogramstart/handler/ControllerExceptionHandler.java
+@@ -1,11 +1,12 @@
+ package com.cos.photogramstart.handler;
+ 
+-import java.util.Map;
+-
++import org.springframework.http.HttpStatus;
++import org.springframework.http.ResponseEntity;
+ import org.springframework.web.bind.annotation.ControllerAdvice;
+ import org.springframework.web.bind.annotation.ExceptionHandler;
+ import org.springframework.web.bind.annotation.RestController;
+ 
++import com.cos.photogramstart.handler.ex.CustomValidationApiException;
+ import com.cos.photogramstart.handler.ex.CustomValidationException;
+ import com.cos.photogramstart.util.Script;
+ import com.cos.photogramstart.web.dto.CMRespDTO;
+@@ -29,6 +30,11 @@ public class ControllerExceptionHandler {
+ 	public String validationException(CustomValidationException e) {
+ 		return Script.back(e.getErrorMap().toString());
+ 	}
++	
++	@ExceptionHandler(CustomValidationApiException.class) 
++	public ResponseEntity<?> validationApiException(CustomValidationApiException e) {
++		return new ResponseEntity<>(new CMRespDTO<>(-1,e.getMessage(),e.getErrorMap()),HttpStatus.BAD_REQUEST);
++	}
+ }
+ 
+ 
+diff --git a/src/main/java/com/cos/photogramstart/handler/ex/CustomValidationApiException.java b/src/main/java/com/cos/photogramstart/handler/ex/CustomValidationApiException.java
+new file mode 100644
+index 0000000..cb307f0
+--- /dev/null
++++ b/src/main/java/com/cos/photogramstart/handler/ex/CustomValidationApiException.java
+@@ -0,0 +1,26 @@
++package com.cos.photogramstart.handler.ex;
++
++import java.util.Map;
++
++public class CustomValidationApiException extends RuntimeException{
++
++	//객체를 구분할 때!!!!!( 그냥 무시하고 쓰자 ) 
++	private static final long serialVersionUID = 1L;
++	
++	private Map<String,String> errorMap;
++	
++	public CustomValidationApiException(String message, Map<String,String> errorMap) {
++		super(message);
++		this.errorMap = errorMap;
++	}
++
++	public CustomValidationApiException(String message) {
++		super(message);
++	}
++	
++	public Map<String,String> getErrorMap(){
++		return errorMap;
++	}
++	
++
++}
+diff --git a/src/main/java/com/cos/photogramstart/service/UserService.java b/src/main/java/com/cos/photogramstart/service/UserService.java
+index 990bcbe..bfb479a 100644
+--- a/src/main/java/com/cos/photogramstart/service/UserService.java
++++ b/src/main/java/com/cos/photogramstart/service/UserService.java
+@@ -1,11 +1,14 @@
+ package com.cos.photogramstart.service;
+ 
++import java.util.function.Supplier;
++
+ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+ import org.springframework.stereotype.Service;
+ import org.springframework.transaction.annotation.Transactional;
+ 
+ import com.cos.photogramstart.domain.user.User;
+ import com.cos.photogramstart.domain.user.UserRepository;
++import com.cos.photogramstart.handler.ex.CustomValidationApiException;
+ 
+ import lombok.RequiredArgsConstructor;
+ 
+@@ -20,9 +23,10 @@ public class UserService {
+ 	public User userUpdate(int id, User user) {
+ 		
+ 		//1.영속화
+-		User userEntity = userRepository.findById(id).get(); //1.무조건 찾았다.. 걱정마 get() 2. 못찾음 예외 발동시킴 orElseThrow()
++		//1.무조건 찾았다.. 걱정마 get() 2. 못찾음 예외 발동시킴 orElseThrow()
++		User userEntity = userRepository.findById(id).orElseThrow(() -> {return new CustomValidationApiException("찾을 수 없는 id입니다.");});
+ 		
+-		//2.영속회돤 오브젝트를 수정 - 더티체킹 (업데이트 완료)
++		//2.영속화돤 오브젝트를 수정 - 더티체킹 (업데이트 완료)
+ 		userEntity.setName(user.getName());
+ 		
+ 		String rawPassword = user.getPassword();
+diff --git a/src/main/java/com/cos/photogramstart/web/UserController.java b/src/main/java/com/cos/photogramstart/web/UserController.java
+index 588e551..ccc0e60 100644
+--- a/src/main/java/com/cos/photogramstart/web/UserController.java
++++ b/src/main/java/com/cos/photogramstart/web/UserController.java
+@@ -28,12 +28,11 @@ public class UserController {
+ 	public String update(@PathVariable int id, @AuthenticationPrincipal PrincipalDetails principalDetails,Model model) {
+ 		
+ 		// 1.추천
+-		System.out.println("세션정보 : "+principalDetails.getUser());
+-		
++		//System.out.println("세션정보 : "+principalDetails.getUser());
+ 		// 2.복잡한 방법(극혐)
+ 		Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+ 		PrincipalDetails mPrincipalDetails = (PrincipalDetails)auth.getPrincipal();
+-		System.out.println("직접 찾은 세션정보 : "+mPrincipalDetails.getUser());
++		//System.out.println("직접 찾은 세션정보 : "+mPrincipalDetails.getUser());
+ 		
+ 		/* model.addAttribute("principal", principalDetails.getUser()); */
+ 		
+diff --git a/src/main/java/com/cos/photogramstart/web/api/UserApiController.java b/src/main/java/com/cos/photogramstart/web/api/UserApiController.java
+index 30400ce..b99ced0 100644
+--- a/src/main/java/com/cos/photogramstart/web/api/UserApiController.java
++++ b/src/main/java/com/cos/photogramstart/web/api/UserApiController.java
+@@ -1,12 +1,20 @@
+ package com.cos.photogramstart.web.api;
+ 
++import java.util.HashMap;
++import java.util.Map;
++
++import javax.validation.Valid;
++
+ import org.springframework.security.core.annotation.AuthenticationPrincipal;
++import org.springframework.validation.BindingResult;
++import org.springframework.validation.FieldError;
+ import org.springframework.web.bind.annotation.PathVariable;
+ import org.springframework.web.bind.annotation.PutMapping;
+ import org.springframework.web.bind.annotation.RestController;
+ 
+ import com.cos.photogramstart.config.auth.PrincipalDetails;
+ import com.cos.photogramstart.domain.user.User;
++import com.cos.photogramstart.handler.ex.CustomValidationApiException;
+ import com.cos.photogramstart.service.UserService;
+ import com.cos.photogramstart.web.dto.CMRespDTO;
+ import com.cos.photogramstart.web.dto.user.UserUpdateDTO;
+@@ -20,13 +28,32 @@ public class UserApiController {
+ 	private final UserService userService;
+ 
+ 	@PutMapping("/api/user/{id}")
+-	public CMRespDTO<?> update(@PathVariable int id ,UserUpdateDTO userUpdateDTO, @AuthenticationPrincipal PrincipalDetails principalDetails) {
+-		System.out.println(userUpdateDTO);
++	public CMRespDTO<?> update(
++			@PathVariable int id ,
++			@Valid UserUpdateDTO userUpdateDTO,
++			BindingResult bindingResult, //bindingResult는  @Valid 바로 다음에 적어줘야함.
++			@AuthenticationPrincipal PrincipalDetails principalDetails
++			) 
++	{
++		if(bindingResult.hasErrors()) {
++			Map<String,String> errorMap = new HashMap();
++			
++			for(FieldError error : bindingResult.getFieldErrors()) {
++				errorMap.put(error.getField(), error.getDefaultMessage());
++				System.out.println("==========================================");
++				System.out.println(error.getField());
++				System.out.println(error.getDefaultMessage());
++				System.out.println("==========================================");
++			}
++			throw new CustomValidationApiException("유효성 검사 실패함",errorMap);
++		}else {
++			User userEntity = userService.userUpdate(id, userUpdateDTO.toEntity());
++			principalDetails.setUser(userEntity); //세션 정보 변경 
++			
++			return new CMRespDTO<>(1,"회원수정 완료",userEntity);
++		}
+ 		
+-		User userEntity = userService.userUpdate(id, userUpdateDTO.toEntity());
+-		principalDetails.setUser(userEntity); //세션 정보 변경 
+ 		
+-		return new CMRespDTO<>(1,"회원수정 완료",userEntity);
+ 	}
+ 	
+ }
+diff --git a/src/main/java/com/cos/photogramstart/web/dto/user/UserUpdateDTO.java b/src/main/java/com/cos/photogramstart/web/dto/user/UserUpdateDTO.java
+index 613c25c..a4ba299 100644
+--- a/src/main/java/com/cos/photogramstart/web/dto/user/UserUpdateDTO.java
++++ b/src/main/java/com/cos/photogramstart/web/dto/user/UserUpdateDTO.java
+@@ -1,13 +1,16 @@
+ package com.cos.photogramstart.web.dto.user;
+ 
++import javax.validation.constraints.NotBlank;
++
+ import com.cos.photogramstart.domain.user.User;
+ 
+ import lombok.Data;
+ 
+ @Data
+ public class UserUpdateDTO {
+-
++	@NotBlank
+ 	private String name; //필수
++	@NotBlank
+ 	private String password; //필수
+ 	
+ 	private String website;
+diff --git a/src/main/resources/static/js/update.js b/src/main/resources/static/js/update.js
+index 369a80c..3cf26f3 100644
+--- a/src/main/resources/static/js/update.js
++++ b/src/main/resources/static/js/update.js
+@@ -1,6 +1,7 @@
+ 
+ // (1) 회원정보 수정
+-function update(userId) {
++function update(userId,event) {
++	event.preventDefault(); // 폼태크 액션 막기 
+ 	
+ 	let data = $('#profileUpdate').serialize();
+ 	console.log(data);
+@@ -11,13 +12,17 @@ function update(userId) {
+ 		data : data,
+ 		contentType : "application/x-www-form-urlencoded ; charset=utf-8",
+ 		dataType : "json"
+-		
+-	}).done(res => {
+-		console.log(res);
++	}).done(res => { // HttpStatus 상태코드 200번대 
++		console.log("성공" , res);
+ 		location.href=`/user/${userId}`;
+ 		
+-	}).fail(res => {
+-		console.log("fail 실패");
++	}).fail(error => { // HttpStatus 상태코드 200번대가 아닐 시에 fali이 뜸
++		console.log(error);
++		if(error.data == null){
++			alert(error.responseJSON.message);
++		}else{
++			alert(JSON.stringify(error.responseJSON.data));	
++		}
+ 	});
+ 	
+ }
+\ No newline at end of file
+diff --git a/src/main/webapp/WEB-INF/views/user/update.jsp b/src/main/webapp/WEB-INF/views/user/update.jsp
+index 9b6270d..829c6cf 100644
+--- a/src/main/webapp/WEB-INF/views/user/update.jsp
++++ b/src/main/webapp/WEB-INF/views/user/update.jsp
+@@ -22,12 +22,12 @@
+ 			<!--프로필셋팅 아이디영역end-->
+ 
+ 			<!--프로필 수정-->
+-			<form id="profileUpdate">
++			<form id="profileUpdate" onsubmit="update(${principal.user.id},event)">
+ 				<div class="content-item__02">
+ 					<div class="item__title">이름</div>
+ 					<div class="item__input">
+ 						<input type="text" name="name" placeholder="이름"
+-							value="${ principal.user.name }" />
++							value="${ principal.user.name }" required="required" />
+ 					</div>
+ 				</div>
+ 				<div class="content-item__03">
+@@ -40,7 +40,7 @@
+ 				<div class="content-item__04">
+ 					<div class="item__title">패스워드</div>
+ 					<div class="item__input">
+-						<input type="password" name="password" placeholder="패스워드"  />
++						<input type="password" name="password" placeholder="패스워드" required="required" />
+ 					</div>
+ 				</div>
+ 				<div class="content-item__05">
+@@ -88,7 +88,7 @@
+ 				<div class="content-item__11">
+ 					<div class="item__title"></div>
+ 					<div class="item__input">
+-						<button type="button" onclick="update(${principal.user.id})">제출</button>
++						<button>제출</button>
+ 					</div>
+ 				</div>
+ 				<!--제출버튼end-->
+-- 
+2.30.2.windows.1
+
